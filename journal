@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Trading Journal</title>
+<style>
+*{box-sizing:border-box}
+body{margin:0 auto;max-width:520px;padding:10px;font-family:system-ui,sans-serif;background:#0f172a;color:#e2e8f0}
+h2,h3,h4{margin:6px 0}
+.row{display:flex;gap:6px;align-items:center;justify-content:space-between}
+input,select,button{font:inherit;padding:10px;border-radius:8px;border:1px solid #334155;background:#1e293b;color:inherit;width:100%;margin:3px 0}
+button{width:auto;cursor:pointer}
+.grid{display:grid;grid-template-columns:repeat(7,1fr);gap:4px}
+.h{text-align:center;font-size:11px;color:#94a3b8}
+.c{min-height:54px;border-radius:8px;background:#1e293b;padding:4px;font-size:11px;cursor:pointer;overflow:hidden}
+.c b{display:block;font-size:13px}
+.c.p{background:#166534;color:#bbf7d0}
+.c.l{background:#991b1b;color:#fecaca}
+.c.t{outline:2px solid #38bdf8}
+.c.s{outline:2px solid #fff}
+.sum{display:grid;grid-template-columns:repeat(auto-fit,minmax(78px,1fr));gap:6px;margin:8px 0}
+.sum div{background:#1e293b;border-radius:8px;padding:6px;font-size:12px;color:#94a3b8}
+.sum b{display:block;font-size:14px;color:#e2e8f0}
+.g,.sum b.g{color:#22c55e}
+.r,.sum b.r{color:#ef4444}
+.card{background:#111c33;border-radius:10px;padding:10px;margin:10px 0}
+.tr{display:flex;justify-content:space-between;gap:8px;padding:8px 0;border-bottom:1px solid #334155}
+.tr small{color:#94a3b8}
+.tr button{padding:4px 8px;margin:2px 0 0 4px}
+</style>
+</head>
+<body>
+
+<div class="row">
+  <button id="prev">‹</button>
+  <h2 id="ttl"></h2>
+  <button id="next">›</button>
+  <button id="today">Aaj</button>
+</div>
+<div id="sum" class="sum"></div>
+<div id="cal" class="grid"></div>
+
+<div id="day" class="card" hidden>
+  <h3 id="dt"></h3>
+  <div id="ds" class="sum"></div>
+  <div id="list"></div>
+  <h4 id="fh">Trade add karo</h4>
+  <input id="sym" placeholder="Stock / Symbol (jaise NIFTY)">
+  <select id="side"><option>Buy</option><option>Sell</option></select>
+  <input id="qty" type="number" inputmode="decimal" placeholder="Qty (lots)">
+  <input id="lot" type="number" inputmode="decimal" placeholder="Lot size (jaise 75)">
+  <div id="tq" style="color:#94a3b8;font-size:13px;margin:4px 0">Total Qty: 0</div>
+  <input id="pnl" type="number" inputmode="decimal" step="any" placeholder="Profit / Loss ₹ (loss = -500)">
+  <input id="note" placeholder="Note / reason">
+  <div class="row" style="justify-content:flex-start">
+    <button id="save">Save</button>
+    <button id="cancel" hidden>Cancel</button>
+  </div>
+</div>
+
+<div class="row" style="justify-content:flex-start">
+  <button id="exp">Backup</button>
+  <button id="imp">Restore</button>
+  <input type="file" id="file" accept=".json" hidden>
+</div>
+
+<script>
+const KEY='tj_trades_v1';
+const $=id=>document.getElementById(id);
+const pad=n=>String(n).padStart(2,'0');
+const ds=(y,m,d)=>y+'-'+pad(m+1)+'-'+pad(d);
+const cl=n=>n>0?'g':n<0?'r':'';
+const esc=s=>String(s||'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const money=n=>(n<0?'-':'')+'₹'+Math.abs(n).toLocaleString('en-IN',{maximumFractionDigits:2});
+const short=n=>{const a=Math.abs(n),s=n<0?'-':'+';return s+(a>=100000?(a/100000).toFixed(1)+'L':a>=1000?(a/1000).toFixed(1)+'k':Math.round(a))};
+
+let trades=load(),view=new Date(),sel=null,editId=null;
+view.setDate(1);
+
+function load(){try{return JSON.parse(localStorage.getItem(KEY))||[]}catch(e){return []}}
+function save(){try{localStorage.setItem(KEY,JSON.stringify(trades))}catch(e){alert('Save nahi hua. Browser storage check karo.')}}
+
+function stats(a){
+  const pr=a.filter(t=>t.pnl>0).reduce((s,t)=>s+t.pnl,0);
+  const ls=a.filter(t=>t.pnl<0).reduce((s,t)=>s+t.pnl,0);
+  const net=pr+ls,w=a.filter(t=>t.pnl>0).length;
+  const tq=Math.round(a.reduce((s,t)=>s+(t.total??t.qty??0),0)*100)/100;
+  return `<div>Trades<b>${a.length}</b></div>
+  <div>Total Qty<b>${tq}</b></div>
+  <div>Profit<b class="g">${money(pr)}</b></div>
+  <div>Loss<b class="r">${money(ls)}</b></div>
+  <div>Net<b class="${cl(net)}">${money(net)}</b></div>
+  <div>Win %<b>${a.length?Math.round(w/a.length*100):0}%</b></div>`;
+}
+
+function render(){
+  const y=view.getFullYear(),m=view.getMonth(),pre=y+'-'+pad(m+1);
+  $('ttl').textContent=view.toLocaleString('en-US',{month:'long',year:'numeric'});
+  const mt=trades.filter(t=>t.date.startsWith(pre));
+  $('sum').innerHTML=stats(mt);
+  const by={};mt.forEach(t=>(by[t.date]=by[t.date]||[]).push(t));
+  const first=new Date(y,m,1).getDay(),days=new Date(y,m+1,0).getDate();
+  const n=new Date(),tk=ds(n.getFullYear(),n.getMonth(),n.getDate());
+  let h=['S','M','T','W','T','F','S'].map(x=>`<div class="h">${x}</div>`).join('');
+  for(let i=0;i<first;i++)h+='<div></div>';
+  for(let d=1;d<=days;d++){
+    const k=ds(y,m,d),a=by[k]||[],net=a.reduce((s,t)=>s+t.pnl,0);
+    const c='c'+(a.length?(net>0?' p':net<0?' l':''):'')+(k===tk?' t':'')+(k===sel?' s':'');
+    h+=`<div class="${c}" data-d="${k}"><b>${d}</b>${a.length?short(net):''}</div>`;
+  }
+  $('cal').innerHTML=h;
+  if(sel)renderDay();
+}
+
+function renderDay(){
+  const a=trades.filter(t=>t.date===sel);
+  $('day').hidden=false;
+  $('dt').textContent=new Date(sel+'T00:00').toLocaleDateString('en-IN',{weekday:'long',day:'numeric',month:'long',year:'numeric'});
+  $('ds').innerHTML=stats(a);
+  $('list').innerHTML=a.map(t=>{
+    const info=[t.side,t.lot!=null&&t.qty!=null?t.qty+' × '+t.lot+' = '+t.total:(t.qty!=null?'Qty '+t.qty:'')].filter(Boolean).join(' | ');
+    return `<div class="tr"><div><b>${esc(t.symbol)||'Trade'}</b><br><small>${info}</small><br><small>${esc(t.note)}</small></div>
+    <div style="text-align:right" class="${cl(t.pnl)}">${money(t.pnl)}<br><button data-e="${t.id}">Edit</button><button data-x="${t.id}">Del</button></div></div>`;
+  }).join('')||'<p style="color:#94a3b8">Is din koi trade nahi hai.</p>';
+}
+
+function clearForm(){
+  ['sym','qty','lot','pnl','note'].forEach(i=>$(i).value='');calc();
+  $('side').value='Buy';editId=null;
+  $('fh').textContent='Trade add karo';$('cancel').hidden=true;
+}
+
+function openDay(k){
+  sel=k;clearForm();render();
+  $('day').scrollIntoView({behavior:'smooth'});
+}
+
+function calc(){
+  const q=parseFloat($('qty').value),l=parseFloat($('lot').value);
+  $('tq').textContent='Total Qty: '+((isNaN(q)||isNaN(l))?0:Math.round(q*l*100)/100);
+}
+['qty','lot'].forEach(i=>$(i).addEventListener('input',calc));
+
+$('save').onclick=()=>{
+  const pnl=parseFloat($('pnl').value);
+  if(isNaN(pnl))return alert('Profit / Loss amount daalo');
+  const n=i=>{const v=parseFloat($(i).value);return isNaN(v)?null:v};
+  const qv=n('qty'),lv=n('lot');
+  const t={id:editId||Date.now().toString(36),date:sel,symbol:$('sym').value.trim(),side:$('side').value,
+    qty:qv,lot:lv,total:qv!=null&&lv!=null?Math.round(qv*lv*100)/100:qv,pnl:pnl,note:$('note').value.trim()};
+  if(editId)trades=trades.map(x=>x.id===editId?t:x);else trades.push(t);
+  save();clearForm();render();
+};
+$('cancel').onclick=clearForm;
+
+$('list').onclick=e=>{
+  const ed=e.target.dataset.e,dl=e.target.dataset.x;
+  if(dl&&confirm('Ye trade delete karein?')){trades=trades.filter(t=>t.id!==dl);save();render()}
+  if(ed){
+    const t=trades.find(x=>x.id===ed);if(!t)return;
+    editId=ed;
+    $('sym').value=t.symbol;$('side').value=t.side;
+    $('qty').value=t.qty??'';$('lot').value=t.lot??'';calc();
+    $('pnl').value=t.pnl;$('note').value=t.note;
+    $('fh').textContent='Trade edit karo';$('cancel').hidden=false;
+    $('sym').scrollIntoView({behavior:'smooth'});
+  }
+};
+
+$('cal').onclick=e=>{const c=e.target.closest('[data-d]');if(c)openDay(c.dataset.d)};
+$('prev').onclick=()=>{view.setMonth(view.getMonth()-1);render()};
+$('next').onclick=()=>{view.setMonth(view.getMonth()+1);render()};
+$('today').onclick=()=>{
+  const n=new Date();view=new Date(n.getFullYear(),n.getMonth(),1);
+  openDay(ds(n.getFullYear(),n.getMonth(),n.getDate()));
+};
+
+$('exp').onclick=()=>{
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(new Blob([JSON.stringify(trades)],{type:'application/json'}));
+  a.download='trading-backup.json';a.click();
+};
+$('imp').onclick=()=>$('file').click();
+$('file').onchange=e=>{
+  const f=e.target.files[0];if(!f)return;
+  const r=new FileReader();
+  r.onload=()=>{
+    try{
+      const d=JSON.parse(r.result);
+      if(!Array.isArray(d))throw 0;
+      if(!confirm('Purana data replace ho jayega. Continue?'))return;
+      trades=d;save();render();
+    }catch(x){alert('File galat hai')}
+  };
+  r.readAsText(f);e.target.value='';
+};
+
+render();
+</script>
+</body>
+</html>
